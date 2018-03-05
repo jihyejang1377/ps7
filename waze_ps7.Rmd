@@ -1,0 +1,233 @@
+---
+title: "waze_ps7"
+author: "Jihye"
+date: "3/4/2018"
+output: html_document
+---
+
+
+```{r setup, include=FALSE}
+knitr::opts_chunk$set(echo = TRUE)
+library(jsonlite)
+library(tidyverse)
+library(RMySQL)
+library(ggmap)
+```
+
+# 3 Waze JSON exploration
+
+# 3-1
+Three main datasets: alerts, jams and irregularities.   
+
+In alerts, we have information on country, # of ThumbsUp, reportRating, confidence, reliability, type, uuid, roadType, magvar, subtype, street, location.    
+
+In jams, we have information on country, city, level, line, speedKMH, length, turnType, type, uuid, speed, segments, roadType, delay, street   
+    
+In irregularities, we have information on country, # of Thumbsup, updatedate, trend, line, detectiondatemills, type, endnote, speed, seconds, jamlevel, highway, etc.
+
+# 3-2
+```{r}
+waze_js <- fromJSON("https://na-georss.waze.com/rtserver/web/TGeoRSS?tk=ccp_partner&ccp_partner_name=University%20of%20Chicago&format=JSON&types=traffic,alerts,irregularities&polygon=-88.138000,42.112000;-87.569000,42.110000;-87.553000,41.511000;-88.132000,41.513000;-88.138000,42.112000;-88.138000,42.112000")
+```
+
+```{r, eval=FALSE}
+alerts <- waze_js[[1]]
+jams <- waze_js[[7]]
+irregularities <- waze_js[[3]]
+
+coord_pts <- alerts[[13]]
+map <- get_map("chicago, illinois")
+
+devtools::install_github("dkahle/ggmap")
+devtools::install_github("hadley/ggplot2")
+```
+
+```{r}
+#ggmap(map, extent = "normal") +
+#  geom_point(data = coord_pts, aes(x = x, y = y), alpha = .5) +
+#  ggtitle("Alerts in Chicago March 4 2018 4:08 pm")
+
+#it doesn't work on my computer
+```
+
+#4 Waze SQL exploration
+
+```{r, eval=FALSE}
+require(tidyverse)
+require(dbplyr)
+require(RMySQL)
+con <- DBI::dbConnect(RMySQL::MySQL(),
+                      host = "uchicagowaze.cfykgneqoh8w.us-west-2.rds.amazonaws.com",
+                      user = "ppha30531",
+                      dbname='Waze2',
+                      port = 3306,
+                      password = .rs.askForPassword("Password")
+)
+
+DBI::dbListTables(con)
+chi_sql <- tbl(con,"chiAlerts")
+```
+
+# 4-1
+```{r, eval=FALSE}
+chi_sql
+chi_sql[1]
+chi_sql[2]
+```    
+
+Variables included: country, # of thumbs up, city, report rating, confidence, reliability, type, uuid, road type, magvar and subtype.     
+They don't provide information on the time, or sepcific location.   
+
+# 4-2
+```{r, eval=FALSE}
+chi_sql %>% 
+  select(country) %>%
+  tally()
+
+chi_sql %>% 
+  select(uuid) %>%
+  group_by(uuid) %>%
+  tally()
+```
+
+There are 5380367 rows. 
+There are 999 distinct uuid values, and 59 NAs.      
+The server takes snapshot whenever I send a query.    
+
+# 4-3
+```{r, eval=FALSE}
+chi_sql %>%
+  select(type) %>%
+  group_by(type) %>%
+  tally()
+
+chi_sql %>%
+  select(type) %>%
+  group_by(type) %>%
+  tally() %>%
+  show_query()
+
+system.time(chi_sql %>% select(type) %>% group_by(type) %>% tally())
+```
+
+4 distinct alert types on the server, and some are NAs.     
+
+The underlying SQL is:    
+<SQL>
+SELECT `type`, COUNT(*) AS `n`
+FROM (SELECT `type`
+FROM `chiAlerts`) `nqyfquaueg`
+GROUP BY `type`     
+
+It took 0.018 sec.      
+
+# 4-4
+```{r, cahe = TRUE, eval = FALSE}
+system.time(type <- chi_sql %>%
+              select(type) %>%
+              collect())
+
+type <- chi_sql %>%
+  select(type) %>%
+  collect()
+
+system.time(n_distinct(type$type))   
+```
+
+It took 29.087 sec to download it to my computer.
+and it took 0.2 sec to count the numbers. 
+
+# 4-5
+```{r, cache = TRUE, eval = FALSE}
+system.time(chi_sql <- chi_sql %>%
+  collect())
+
+chi_sql <- chi_sql %>%
+  collect()
+
+ncol(chi_sql)
+nrow(chi_sql)
+```
+
+Downloading the entire data took 377.7 seconds.
+There are 5380367 rows and 17 columns in the only dataset - alerts.    
+
+# 4-6
+```{r}
+# couldn't figure it out
+```
+
+# 4-7
+```{r}
+tb_long <- tribble(
+  ~varaibel,            ~contents,                       ~logic,
+  
+  "country",           "Country",                        "TRUE",
+  "nTHumbsUp",         "# of thumbs up",                 "FALSE",
+  "city",              "City",                           "TRUE",
+  "reportRating",      "Rating of the report",           "TRUE",
+  "confidence",        "Confidence Level",               "TRUE",
+  "reliability",       "Reliability Level",              "TRUE",
+  "type",              "Alert type",                     "TRUE",
+  "uuid",              "ID of the alert",                "FALSE",
+  "roadType",          "Road Type",                      "TRUE",
+  "magvar",            "Direction",                      "FALSE",
+  "subtype",           "Subtype of the alert",           "TRUE",
+  "street",            "Street",                         "FALSE",
+  "location_x",        "Longitude",                      "FALSE",
+  "location_y",        "Latitude",                       "FALSE",
+  "pubMillis",         "?",                              "FALSE",
+  "reportDescription", "Descrption of the report",       "FALSE",
+  "scrape_dt",        "Date and time",                   "FALSE"
+)
+```
+
+# 4-8
+```{r, eval=FALSE}
+chi_sql %>%
+  select(scrape_dt, pubMillis) %>%
+  mutate(date = as.POSIXct(pubMillis/1000, origin="1970-01-01", tz = "CST")) %>%
+  head()
+```
+
+# 5 Explore specific events
+
+# 5-1    
+```{r, eval=FALSE}
+df <- chi_sql %>%
+  filter(uuid == "dcd95fd1-14d2-3f47-8981-ed39b220f99c") %>%
+  collect()
+```
+
+```{r, eval=FALSE}
+df[["scrape_dt"]] %>% first()
+df[["scrape_dt"]] %>% last()
+```
+first: [1] "2017-11-27 01:10:00"
+last: [1] "2017-11-27 05:05:00"    
+Confidence and reliability changed.
+
+# 5-2    
+```{r, eval=FALSE}
+df2 <- chi_sql %>%
+  filter(uuid == "c5a73cc6-5242-3172-be5a-cf8990d70cb2") %>%
+  collect()
+
+df2 %>%
+  filter(type == "JAM") %>%
+  filter(as.Date(scrape_dt) == "2017-12-24") %>%
+  filter(between(location_x, -87.5, -87.7) & between(location_y, 41.8 ,42.0)) 
+```
+
+# 5-3
+
+```{r, eval=FALSE}
+df3 <- chi_sql %>%
+  filter(uuid == "79ff4897-0beb-3f6d-af79-934ad4925987") %>%
+  collect()
+
+df3
+```    
+the accident happened on W Lexington St around 2017-11-15 11-12 am at the location (-87.8	41.9)
+
+
